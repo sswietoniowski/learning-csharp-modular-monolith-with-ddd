@@ -1,7 +1,7 @@
 ﻿using System;
 using CompanyName.MyMeetings.BuildingBlocks.Application;
 
-namespace CompanyNames.MyMeetings.Modules.UserAccess.IntegrationTests.SeedWork
+namespace CompanyName.MyMeetings.SUT.SeedWork
 {
     public class ExecutionContextMock : IExecutionContextAccessor
     {
@@ -15,7 +15,7 @@ namespace CompanyNames.MyMeetings.Modules.UserAccess.IntegrationTests.SeedWork
         public Guid CorrelationId { get; }
 
         public bool IsAvailable { get; }
-        
+
         public void SetUserId(Guid userId)
         {
             this.UserId = userId;

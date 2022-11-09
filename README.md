@@ -2,6 +2,21 @@
 
 Full Modular Monolith .NET application with Domain-Driven Design approach.
 
+## Announcement
+
+![](docs/Images/glory_to_ukraine.jpg)
+
+Learn, use and benefit from this project only if:
+
+- You **condemn Russia and its military aggression against Ukraine**
+- You **recognize that Russia is an occupant that unlawfully invaded a sovereign state**
+- You **support Ukraine's territorial integrity, including its claims over temporarily occupied territories of Crimea and Donbas**
+- You **reject false narratives perpetuated by Russian state propaganda**
+
+Otherwise, leave this project immediately and educate yourself.
+
+Putin, idi nachuj.
+
 ## CI
 
 ![](https://github.com/kgrzybek/modular-monolith-with-ddd/workflows/Build%20Pipeline/badge.svg)
@@ -73,6 +88,10 @@ FrontEnd application : [Modular Monolith With DDD: FrontEnd React application](h
 &nbsp;&nbsp;[3.17 Continuous Integration](#317-continuous-integration)
 
 &nbsp;&nbsp;[3.18 Static code analysis](#318-static-code-analysis)
+
+&nbsp;&nbsp;[3.19 System Under Test SUT](#319-system-under-test-sut)
+
+&nbsp;&nbsp;[3.20 Mutation Testing](#320-mutation-testing)
 
 [4. Technology](#4-technology)
 
@@ -1874,6 +1893,131 @@ Using this library is trivial - it is just added as a NuGet package to all proje
 2. The rules are checked during the project build process as part of Continuous Integration
 3. The rules are set to *help your system grow*. **Static analysis is not a value in itself.** Some rules may not make complete sense and should be turned off. Other rules may have higher priority. It all depends on the project, company standards and people involved in the project. Be pragmatic.
 
+### 3.19 System Under Test SUT
+
+There is always a need to prepare the entire system in a specific state, e.g. for manual, exploratory, UX / UI tests. The fact that the tests are performed manually does not mean that we cannot automate the preparation phase (Given / Arrange). Thanks to the automation of system state preparation ([System Under Test](https://en.wikipedia.org/wiki/System_under_test)), we are able to recreate exactly the same state in any environment. In addition, such automation can be used later to automate the entire test (e.g. through an [3.13 Integration Tests](#313-integration-tests)).<br/>
+
+The implementation of such automation based on the use of NUKE and the test framework is presented below. As in the case of integration testing, we use the public API of modules.
+
+![](docs/Images/sut-preparation.jpg)
+
+Below is a SUT whose task is to go through the whole process - from setting up a *Meeting Group*, through its *Payment*, adding a new *Meeting* and signing up for it by another user.
+
+```csharp
+public class CreateMeeting : TestBase
+{
+    protected override bool PerformDatabaseCleanup => true;
+
+    [Test]
+    public async Task Prepare()
+    {
+        await UsersFactory.GivenAdmin(
+            UserAccessModule,
+            "testAdmin@mail.com",
+            "testAdminPass",
+            "Jane Doe",
+            "Jane",
+            "Doe",
+            "testAdmin@mail.com");
+
+        var userId = await UsersFactory.GivenUser(
+            UserAccessModule,
+            ConnectionString,
+            "adamSmith@mail.com",
+            "adamSmithPass",
+            "Adam",
+            "Smith",
+            "adamSmith@mail.com");
+
+        ExecutionContextAccessor.SetUserId(userId);
+
+        var meetingGroupId = await MeetingGroupsFactory.GivenMeetingGroup(
+            MeetingsModule,
+            AdministrationModule,
+            ConnectionString,
+            "Software Craft",
+            "Group for software craft passionates",
+            "Warsaw",
+            "PL");
+
+        await TestPriceListManager.AddPriceListItems(PaymentsModule, ConnectionString);
+
+        await TestPaymentsManager.BuySubscription(
+            PaymentsModule,
+            ExecutionContextAccessor);
+        
+        SetDate(new DateTime(2022, 7, 1, 10, 0, 0));
+
+        var meetingId = await TestMeetingFactory.GivenMeeting(
+            MeetingsModule,
+            meetingGroupId,
+            "Tactical DDD",
+            new DateTime(2022, 7, 10, 18, 0, 0),
+            new DateTime(2022, 7, 10, 20, 0, 0),
+            "Meeting about Tactical DDD patterns",
+            "Location Name",
+            "Location Address",
+            "01-755",
+            "Warsaw",
+            50,
+            0,
+            null,
+            null,
+            0,
+            null,
+            new List<Guid>()
+        );
+        
+        var attendeeUserId = await UsersFactory.GivenUser(
+            UserAccessModule,
+            ConnectionString,
+            "rickmorty@mail.com",
+            "rickmortyPass",
+            "Rick",
+            "Morty",
+            "rickmorty@mail.com");
+        
+        ExecutionContextAccessor.SetUserId(attendeeUserId);
+
+        await TestMeetingGroupManager.JoinToGroup(MeetingsModule, meetingGroupId);
+
+        await TestMeetingManager.AddAttendee(MeetingsModule, meetingId, guestsNumber: 1);
+    }
+}
+```
+
+You can create this SUT using following *NUKE* target providing connection string and particular test name:
+
+```shell
+ .\build PrepareSUT --DatabaseConnectionString "connection_string" --SUTTestName CreateMeeting
+```
+
+### 3.20 Mutation Testing
+
+#### Description
+
+Mutation testing is an approach to test and evaluate our existing tests. During mutation testing a special framework modifies pieces of our code and runs our tests. These modifications are called *mutations* or *mutants*. If a given *mutation* does not cause a failure of at least once test, it means that the mutant has *survived* so our tests are probably not sufficient.
+
+#### Example
+
+In this repository, the [Stryker.NET](https://stryker-mutator.io/docs/stryker-net/Introduction) framework was used for mutation testing. In the simplest use, after installation, all you need to do is enter the directory of tests that you want to mutate and run the following command:
+
+```shell
+dotnet stryker
+```
+
+The result of this command is the *mutation report file*. Assuming we want to test the unit tests of the Meetings module, such a [report](docs/mutation-tests-reports/mutation-report.html) has been generated. This is its first page:
+
+![](docs/Images/mutation_testing_report.png)
+
+Let us analyze one of the places where the mutant survived. This is the *AddNotAttendee* method of the *Meeting* class. This method is used to add a *Member* to the list of people who have decided not to attend the meeting. According to the logic, if the same person previously indicated that he was going to the *Meeting* and later changed his mind, then if there is someone on the *Waiting List*, he should be added to the attendees. Based on requirements, this should be the person who signed up on the *Waiting List* **first** (based on **SignUpDate**). 
+
+![](docs/Images/mutation_testing_example.png)
+
+As you can see, the mutation framework changed our sorting in linq query (from default ascending to descending). However, each test was successful, so it means that mutant survived so we don't have a test that checks the correct sort based on *SignUpDate*.
+
+From the example above, one more important thing can be deduced - **code coverage is insufficient**. In the given example, this code is covered, but our tests do not check the given requirement, therefore our code may have errors. Mutation testing allow to detect such situations. Of course, as with any tool, we should use it wisely, as not every case requires our attention.
+
 ## 4. Technology
 
 List of technologies, frameworks and libraries used for implementation:
@@ -1907,6 +2051,7 @@ List of technologies, frameworks and libraries used for implementation:
 - [C4-PlantUML](https://github.com/plantuml-stdlib/C4-PlantUML) (C4 Model for PlantUML plugin)
 - [NUKE](https://nuke.build/) (Build automation system)
 - [MSBuild.Sdk.SqlProj](https://github.com/rr-wfm/MSBuild.Sdk.SqlProj/) (Database project compilation)
+- [Stryker.NET](https://stryker-mutator.io/docs/stryker-net/Introduction) (Mutation Testing framework)
 
 ## 5. How to Run
 
@@ -1916,15 +2061,13 @@ List of technologies, frameworks and libraries used for implementation:
 ### Create database
 - Download and install MS SQL Server Express or other
 - Create an empty database using [CreateDatabase_Windows.sql](src/Database/CompanyName.MyMeetings.Database/Scripts/CreateDatabase_Windows.sql) or [CreateDatabase_Linux.sql](src/Database/CompanyName.MyMeetings.Database/Scripts/CreateDatabase_Linux.sql). Script adds **app** schema which is needed for migrations journal table. Change database file path if needed.
-- Build [DatabaseMigrator](src/Database/DatabaseMigrator) application
-- run database migrations:
+- Run database migrations using **MigrateDatabase** NUKE target:
 
 ```shell
-dotnet DatabaseMigrator.dll "connection_string" "scripts_directory_path"
+.\build MigrateDatabase "connection_string"
 ```
 
-*"connection_string"* - connection string to your database <br/>
-*"scripts_directory_path"* - [path to migration scripts](src/Database/CompanyName.MyMeetings.Database/Scripts/Migrations)
+*"connection_string"* - connection string to your database
 
 ### Seed database
 
@@ -1984,6 +2127,14 @@ It will create following services: <br/>
 - Database Migrator
 - Application
 
+### Run Integration Tests in Docker
+
+You can run all Integration Tests in Docker (exactly the same process is executed on CI) using **RunAllIntegrationTests** NUKE target:
+
+```shell
+.\build RunAllIntegrationTests
+```
+
 ## 6. Contribution
 
 This project is still under analysis and development. I assume its maintenance for a long time and I would appreciate your contribution to it. Please let me know by creating an Issue or Pull Request.
@@ -1992,25 +2143,27 @@ This project is still under analysis and development. I assume its maintenance f
 
 List of features/tasks/approaches to add:
 
-| Name                     | Status | Release date |
-| ------------------------ | -------- | -------- |
-| Domain Model Unit Tests |Completed | 2019-09-10 |
-| Architecture Decision Log update |  Completed | 2019-11-09 |
-| Integration automated tests      | Completed | 2020-02-24 |
-| Migration to .NET Core 3.1 |Completed  |  2020-03-04  |
-| System Integration Testing | Completed  |  2020-03-28  |
-| More advanced Payments module | Completed  |  2020-07-11  |
-| Event Sourcing implementation | Completed  |  2020-07-11  |
-| Database Change Management | Completed  |  2020-08-23  |
-| Continuous Integration      | Completed  | 2020-09-01   |
+| Name                               | Status | Release date |
+|------------------------------------| -------- |--------------|
+| Domain Model Unit Tests            |Completed | 2019-09-10   |
+| Architecture Decision Log update   |  Completed | 2019-11-09   |
+| Integration automated tests        | Completed | 2020-02-24   |
+| Migration to .NET Core 3.1         |Completed  | 2020-03-04   |
+| System Integration Testing         | Completed  | 2020-03-28   |
+| More advanced Payments module      | Completed  | 2020-07-11   |
+| Event Sourcing implementation      | Completed  | 2020-07-11   |
+| Database Change Management         | Completed  | 2020-08-23   |
+| Continuous Integration             | Completed  | 2020-09-01   |
 | StyleCop Static Code Analysis      | Completed  | 2020-09-05   |
-| FrontEnd SPA application | Completed |  2020-11-08  |
-| Docker support | Completed |  2020-11-26  |
-| PlantUML Conceptual Model | Completed |  2021-03-22  |
-| C4 Model | Completed |  2021-03-29  |
-| Meeting comments feature | Completed |  2021-03-30  |
-| NUKE build automation | Completed |  2021-06-15  |
-| Database project compilation on CI | Completed |  2021-06-15  |
+| FrontEnd SPA application           | Completed | 2020-11-08   |
+| Docker support                     | Completed | 2020-11-26   |
+| PlantUML Conceptual Model          | Completed | 2021-03-22   |
+| C4 Model                           | Completed | 2021-03-29   |
+| Meeting comments feature           | Completed | 2021-03-30   |
+| NUKE build automation              | Completed | 2021-06-15   |
+| Database project compilation on CI | Completed | 2021-06-15   |
+| System Under Test implementation   | Completed | 2022-07-17   |
+| Mutation Testing                   | Completed | 2022-08-23   |
 
 NOTE: Please don't hesitate to suggest something else or a change to the existing code. All proposals will be considered.
 
